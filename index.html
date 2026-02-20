@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Budżet Domowy</title>
-  <meta name="description" content="Aplikacja do kontrolowania budżetu domowego" />
   <meta name="theme-color" content="#1a56db" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -14,14 +13,13 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; background: #e8edf8; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
-    #root { height: 100%; }
     .pressable:active { background: #f0f5ff !important; }
-    @keyframes fadeIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
-    @keyframes slideUp { from { transform:translateY(100%); } to { transform:none; } }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;} }
+    @keyframes slideUp { from{transform:translateY(100%);}to{transform:none;} }
+    @keyframes spin { to { transform: rotate(360deg); } }
     ::-webkit-scrollbar { display: none; }
-    select, input { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
+    select, input, button { font-family: inherit; }
     select option { font-size: 16px; }
-    button { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
   </style>
 </head>
 <body>
@@ -32,7 +30,14 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script type="text/babel">
 
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ============================================================
+//  KONFIGURACJA — wklej swój URL z Apps Script
+// ============================================================
+const API_URL = "WKLEJ_TUTAJ_URL_Z_APPS_SCRIPT";
+const SECRET_KEY = "budzetdomowy2024"; // musi być takie samo jak w Code.gs
+// ============================================================
 
 const DEFAULT_CATEGORIES = [
   { name: "Czynsz", icon: "🏠" },
@@ -54,19 +59,14 @@ const DEFAULT_CATEGORIES = [
   { name: "Inne", icon: "📦" },
 ];
 
-const STORAGE_KEY = "budget_expenses_v1";
-const CAT_KEY = "budget_categories_v1";
-
-function loadData() {
-  try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : []; }
-  catch { return []; }
+// ---- API helpers ----
+async function apiCall(action, body = {}) {
+  const res = await fetch(API_URL, {
+    method: "POST",
+    body: JSON.stringify({ action, key: SECRET_KEY, ...body }),
+  });
+  return res.json();
 }
-function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
-function loadCats() {
-  try { const r = localStorage.getItem(CAT_KEY); return r ? JSON.parse(r) : DEFAULT_CATEGORIES; }
-  catch { return DEFAULT_CATEGORIES; }
-}
-function saveCats(c) { localStorage.setItem(CAT_KEY, JSON.stringify(c)); }
 
 function formatPLN(amount) {
   return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" }).format(amount);
@@ -81,9 +81,63 @@ function getMonthLabel(key) {
   return `${months[parseInt(month)-1]} ${year}`;
 }
 
+// ---- Spinner ----
+function Spinner({ size = 24, color = "white" }) {
+  return (
+    <div style={{
+      width: size, height: size, border: `3px solid rgba(255,255,255,0.3)`,
+      borderTop: `3px solid ${color}`, borderRadius: "50%",
+      animation: "spin 0.8s linear infinite", display: "inline-block"
+    }} />
+  );
+}
+
+// ---- Setup screen ----
+function SetupScreen({ onSave }) {
+  const [url, setUrl] = useState("");
+  return (
+    <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#1a56db,#0a3fa0)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{fontSize:64,marginBottom:16}}>💰</div>
+      <div style={{color:"white",fontSize:26,fontWeight:800,marginBottom:8}}>Budżet Domowy</div>
+      <div style={{color:"rgba(255,255,255,0.7)",fontSize:14,marginBottom:32,textAlign:"center"}}>
+        Wklej URL z Google Apps Script<br/>żeby połączyć z Google Sheets
+      </div>
+      <div style={{background:"white",borderRadius:20,padding:20,width:"100%",maxWidth:380}}>
+        <div style={{fontSize:11,fontWeight:700,color:"#8e9bae",textTransform:"uppercase",letterSpacing:0.8,marginBottom:8}}>
+          URL aplikacji webowej
+        </div>
+        <textarea
+          style={{width:"100%",border:"1px solid #e0e8f8",borderRadius:12,padding:"10px 12px",fontSize:13,color:"#1a2744",outline:"none",resize:"none",height:80,lineHeight:1.4}}
+          placeholder="https://script.google.com/macros/s/..."
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+        />
+        <button
+          style={{width:"100%",background:"linear-gradient(135deg,#1a56db,#0a3fa0)",color:"white",border:"none",borderRadius:14,padding:"14px",fontSize:16,fontWeight:700,cursor:"pointer",marginTop:12,opacity:url.includes("script.google.com")?1:0.4}}
+          disabled={!url.includes("script.google.com")}
+          onClick={() => { localStorage.setItem("budget_api_url", url.trim()); onSave(url.trim()); }}
+        >
+          Połącz z Google Sheets
+        </button>
+      </div>
+      <div style={{color:"rgba(255,255,255,0.5)",fontSize:12,marginTop:24,textAlign:"center",maxWidth:300}}>
+        URL znajdziesz po wdrożeniu skryptu w Google Apps Script
+      </div>
+    </div>
+  );
+}
+
 function App() {
-  const [expenses, setExpenses] = useState(loadData);
-  const [categories, setCategories] = useState(loadCats);
+  const [apiUrl, setApiUrl] = useState(() => {
+    const saved = localStorage.getItem("budget_api_url");
+    return saved || (API_URL !== "WKLEJ_TUTAJ_URL_Z_APPS_SCRIPT" ? API_URL : "");
+  });
+
+  const [expenses, setExpenses] = useState([]);
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null); // "ok" | "err"
   const [view, setView] = useState("dashboard");
   const [selectedCat, setSelectedCat] = useState(null);
   const [currentMonth, setCurrentMonth] = useState(() => getMonthKey(new Date()));
@@ -92,10 +146,80 @@ function App() {
   const [showNewCat, setShowNewCat] = useState(false);
   const [deleteId, setDeleteId] = useState(null);
   const [addSuccess, setAddSuccess] = useState(false);
+  const [error, setError] = useState(null);
 
-  useEffect(() => { saveData(expenses); }, [expenses]);
-  useEffect(() => { saveCats(categories); }, [categories]);
+  // Load data from Sheets
+  const loadAll = useCallback(async () => {
+    if (!apiUrl) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const [expRes, catRes] = await Promise.all([
+        fetch(apiUrl + "?action=getAll&key=" + SECRET_KEY).then(r => r.json()),
+        fetch(apiUrl + "?action=getCategories&key=" + SECRET_KEY).then(r => r.json()),
+      ]);
+      if (expRes.expenses) setExpenses(expRes.expenses);
+      if (catRes.categories) setCategories(catRes.categories);
+    } catch (e) {
+      setError("Błąd połączenia z Google Sheets");
+    } finally {
+      setLoading(false);
+    }
+  }, [apiUrl]);
 
+  useEffect(() => { if (apiUrl) loadAll(); }, [loadAll]);
+
+  async function addExpense() {
+    if (!form.category || !form.amount || isNaN(parseFloat(form.amount.replace(",",".")))) return;
+    const exp = {
+      id: String(Date.now()),
+      category: form.category,
+      description: form.description,
+      amount: parseFloat(form.amount.replace(",",".")),
+      date: new Date().toISOString(),
+    };
+    // Optimistic update
+    setExpenses(prev => [exp, ...prev]);
+    setForm(f => ({ ...f, description: "", amount: "" }));
+    setAddSuccess(true);
+    setTimeout(() => setAddSuccess(false), 2500);
+    setCurrentMonth(getMonthKey(new Date()));
+
+    // Sync to Sheets
+    setSyncing(true);
+    try {
+      await fetch(apiUrl, { method: "POST", body: JSON.stringify({ action: "add", key: SECRET_KEY, ...exp }) });
+      setSyncStatus("ok");
+    } catch {
+      setSyncStatus("err");
+    } finally {
+      setSyncing(false);
+      setTimeout(() => setSyncStatus(null), 3000);
+    }
+  }
+
+  async function deleteExpense(id) {
+    setExpenses(prev => prev.filter(e => e.id !== id));
+    setDeleteId(null);
+    try {
+      await fetch(apiUrl, { method: "POST", body: JSON.stringify({ action: "delete", key: SECRET_KEY, id }) });
+    } catch { /* silent */ }
+  }
+
+  async function addCategory() {
+    if (!newCatName.trim()) return;
+    const cat = { name: newCatName.trim(), icon: "🏷️" };
+    const updated = [...categories, cat];
+    setCategories(updated);
+    setForm(f => ({ ...f, category: cat.name }));
+    setNewCatName("");
+    setShowNewCat(false);
+    try {
+      await fetch(apiUrl, { method: "POST", body: JSON.stringify({ action: "saveCategories", key: SECRET_KEY, categories: updated }) });
+    } catch { /* silent */ }
+  }
+
+  // Computed
   const monthExpenses = expenses.filter(e => getMonthKey(e.date) === currentMonth);
   const allMonths = [...new Set(expenses.map(e => getMonthKey(e.date)))].sort().reverse();
   if (!allMonths.includes(currentMonth)) allMonths.unshift(currentMonth);
@@ -105,42 +229,12 @@ function App() {
     const total = items.reduce((s, e) => s + e.amount, 0);
     return { ...cat, items, total };
   }).filter(c => c.total > 0).sort((a,b) => b.total - a.total);
-
   const monthIdx = allMonths.indexOf(currentMonth);
-
-  function addExpense() {
-    if (!form.category || !form.amount || isNaN(parseFloat(form.amount.replace(",",".")))) return;
-    const exp = {
-      id: Date.now(),
-      category: form.category,
-      description: form.description,
-      amount: parseFloat(form.amount.replace(",",".")),
-      date: new Date().toISOString(),
-    };
-    setExpenses(prev => [exp, ...prev]);
-    setForm({ category: form.category, description: "", amount: "" });
-    setAddSuccess(true);
-    setTimeout(() => setAddSuccess(false), 2000);
-    setCurrentMonth(getMonthKey(new Date()));
-  }
-
-  function deleteExpense(id) {
-    setExpenses(prev => prev.filter(e => e.id !== id));
-    setDeleteId(null);
-  }
-
-  function addCategory() {
-    if (!newCatName.trim()) return;
-    const cat = { name: newCatName.trim(), icon: "🏷️" };
-    setCategories(prev => [...prev, cat]);
-    setForm(f => ({ ...f, category: cat.name }));
-    setNewCatName("");
-    setShowNewCat(false);
-  }
-
   const catDetail = selectedCat
     ? { ...selectedCat, items: expenses.filter(e => e.category === selectedCat.name).sort((a,b) => new Date(b.date)-new Date(a.date)) }
     : null;
+
+  if (!apiUrl) return <SetupScreen onSave={setApiUrl} />;
 
   const s = styles;
 
@@ -151,8 +245,11 @@ function App() {
         <span style={{fontSize:12,fontWeight:600}}>
           {new Date().toLocaleTimeString("pl-PL",{hour:"2-digit",minute:"2-digit"})}
         </span>
-        <div style={{display:"flex",gap:6,alignItems:"center",fontSize:12}}>
-          <span>●●●</span><span>WiFi</span><span>🔋</span>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {syncing && <Spinner size={14} />}
+          {syncStatus==="ok" && <span style={{fontSize:12}}>✅ Zapisano</span>}
+          {syncStatus==="err" && <span style={{fontSize:12}}>⚠️ Błąd sync</span>}
+          <span style={{fontSize:12}}>☁️ Sheets</span>
         </div>
       </div>
 
@@ -167,12 +264,31 @@ function App() {
           </div>
           {view==="dashboard" && <div style={s.headerSub}>{getMonthLabel(currentMonth)}</div>}
         </div>
+        <button style={s.refreshBtn} onClick={loadAll} title="Odśwież dane">
+          {loading ? <Spinner size={16} /> : "↻"}
+        </button>
       </div>
 
+      {/* Error banner */}
+      {error && (
+        <div style={{background:"#fee2e2",color:"#991b1b",padding:"10px 16px",fontSize:13,fontWeight:600,textAlign:"center"}}>
+          {error} — <span style={{textDecoration:"underline",cursor:"pointer"}} onClick={loadAll}>Spróbuj ponownie</span>
+        </div>
+      )}
+
+      {/* Loading overlay */}
+      {loading && expenses.length === 0 && (
+        <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,color:"#8e9bae"}}>
+          <Spinner size={36} color="#1a56db" />
+          <div style={{fontSize:14}}>Ładowanie z Google Sheets...</div>
+        </div>
+      )}
+
       {/* Content */}
+      {(!loading || expenses.length > 0) && (
       <div style={s.scroll}>
 
-        {/* ===== DASHBOARD ===== */}
+        {/* DASHBOARD */}
         {view === "dashboard" && <>
           <div style={s.monthNav}>
             <button style={{...s.navArrow, opacity: monthIdx>=allMonths.length-1?0.3:1}}
@@ -207,9 +323,7 @@ function App() {
                     <div style={s.catIcon}>{cat.icon}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <div style={s.catName}>{cat.name}</div>
-                      <div style={s.progressBar}>
-                        <div style={{...s.progressFill, width:`${pct}%`}} />
-                      </div>
+                      <div style={s.progressBar}><div style={{...s.progressFill,width:`${pct}%`}}/></div>
                     </div>
                     <div style={{textAlign:"right"}}>
                       <div style={s.catAmount}>{formatPLN(cat.total)}</div>
@@ -217,24 +331,27 @@ function App() {
                     </div>
                     <div style={s.chevron}>›</div>
                   </div>
-                  {i < byCategory.length-1 && <div style={s.divider} />}
+                  {i < byCategory.length-1 && <div style={s.divider}/>}
                 </div>
               );
             })}
           </div>
         </>}
 
-        {/* ===== ADD EXPENSE ===== */}
+        {/* ADD EXPENSE */}
         {view === "add" && (
           <div style={{padding:"0 16px 32px"}}>
-            {addSuccess && <div style={s.successBanner}>✅ Wydatek dodany!</div>}
-
+            {addSuccess && (
+              <div style={s.successBanner}>
+                ✅ Zapisano w Google Sheets!
+              </div>
+            )}
             <div style={s.formCard}>
               <div style={s.formField}>
                 <div style={s.fieldLabel}>Kategoria</div>
                 <select style={s.select} value={form.category}
                   onChange={e => {
-                    if (e.target.value === "__new__") { setShowNewCat(true); }
+                    if (e.target.value === "__new__") setShowNewCat(true);
                     else setForm(f => ({...f, category: e.target.value}));
                   }}>
                   <option value="">Wybierz kategorię...</option>
@@ -245,7 +362,7 @@ function App() {
 
               {showNewCat && (
                 <div style={{padding:"0 16px 14px"}}>
-                  <div style={s.fieldLabel}>Nazwa nowej kategorii</div>
+                  <div style={s.fieldLabel}>Nowa kategoria</div>
                   <div style={{display:"flex",gap:8,marginTop:6}}>
                     <input style={{...s.input,flex:1,border:"1px solid #e0e8f8",borderRadius:10,padding:"8px 12px"}}
                       placeholder="np. Hobby"
@@ -257,7 +374,7 @@ function App() {
                 </div>
               )}
 
-              <div style={s.divider} />
+              <div style={s.divider}/>
 
               <div style={s.formField}>
                 <div style={s.fieldLabel}>Opis / Nazwa</div>
@@ -266,7 +383,7 @@ function App() {
                   onChange={e => setForm(f => ({...f, description: e.target.value}))} />
               </div>
 
-              <div style={s.divider} />
+              <div style={s.divider}/>
 
               <div style={s.formField}>
                 <div style={s.fieldLabel}>Kwota (PLN)</div>
@@ -282,8 +399,8 @@ function App() {
               </div>
             </div>
 
-            <button style={{...s.primaryBtn, opacity: form.category&&form.amount?1:0.4}} onClick={addExpense}>
-              Dodaj wydatek
+            <button style={{...s.primaryBtn,opacity:form.category&&form.amount?1:0.4}} onClick={addExpense}>
+              {syncing ? <Spinner size={20}/> : "Zapisz wydatek w Sheets"}
             </button>
 
             {monthExpenses.length > 0 && <>
@@ -302,7 +419,7 @@ function App() {
                         <div style={s.expAmount}>{formatPLN(exp.amount)}</div>
                         <button style={s.deleteBtn} onClick={() => setDeleteId(exp.id)}>✕</button>
                       </div>
-                      {i < Math.min(monthExpenses.length,15)-1 && <div style={s.divider} />}
+                      {i < Math.min(monthExpenses.length,15)-1 && <div style={s.divider}/>}
                     </div>
                   );
                 })}
@@ -311,10 +428,10 @@ function App() {
           </div>
         )}
 
-        {/* ===== CATEGORY DETAIL ===== */}
+        {/* CATEGORY DETAIL */}
         {view === "category" && catDetail && (
           <div style={{padding:"0 16px 32px"}}>
-            <div style={{...s.totalCard,background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)"}}>
+            <div style={{...s.totalCard,background:"linear-gradient(135deg,#1a56db,#0a3fa0)"}}>
               <div style={{fontSize:44,marginBottom:8}}>{catDetail.icon}</div>
               <div style={s.totalLabel}>{catDetail.name}</div>
               <div style={s.totalAmount}>{formatPLN(catDetail.items.reduce((s,e)=>s+e.amount,0))}</div>
@@ -341,13 +458,14 @@ function App() {
                     </div>
                     <button style={s.deleteBtn} onClick={() => setDeleteId(exp.id)}>✕</button>
                   </div>
-                  {i < catDetail.items.length-1 && <div style={s.divider} />}
+                  {i < catDetail.items.length-1 && <div style={s.divider}/>}
                 </div>
               ))}
             </div>
           </div>
         )}
       </div>
+      )}
 
       {/* Tab Bar */}
       <div style={s.tabBar}>
@@ -370,7 +488,7 @@ function App() {
           <div style={s.modal} onClick={e => e.stopPropagation()}>
             <div style={{fontSize:52,marginBottom:12}}>🗑️</div>
             <div style={s.modalTitle}>Usuń wydatek?</div>
-            <div style={s.modalSub}>Tej operacji nie można cofnąć.</div>
+            <div style={s.modalSub}>Zostanie usunięty też z Google Sheets.</div>
             <button style={s.deleteConfirm} onClick={() => deleteExpense(deleteId)}>Usuń</button>
             <button style={s.cancelBtn} onClick={() => setDeleteId(null)}>Anuluj</button>
           </div>
@@ -382,16 +500,17 @@ function App() {
 
 const styles = {
   root:{minHeight:"100vh",maxWidth:430,margin:"0 auto",background:"#f2f5fb",display:"flex",flexDirection:"column",position:"relative",boxShadow:"0 0 60px rgba(26,86,219,0.12)"},
-  statusBar:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px 4px",background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white"},
-  header:{background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white",padding:"8px 20px 24px",display:"flex",alignItems:"flex-end",gap:12},
+  statusBar:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px 4px",background:"linear-gradient(135deg,#1a56db,#0a3fa0)",color:"white",minHeight:44},
+  header:{background:"linear-gradient(135deg,#1a56db,#0a3fa0)",color:"white",padding:"8px 20px 24px",display:"flex",alignItems:"flex-end",gap:12},
   headerTitle:{fontSize:28,fontWeight:800,letterSpacing:-0.5,lineHeight:1.1},
   headerSub:{fontSize:14,color:"rgba(255,255,255,0.7)",marginTop:2,fontWeight:500},
   backBtn:{background:"rgba(255,255,255,0.2)",border:"none",color:"white",fontSize:16,fontWeight:600,padding:"6px 14px",borderRadius:20,cursor:"pointer",flexShrink:0,marginBottom:4},
+  refreshBtn:{background:"rgba(255,255,255,0.2)",border:"none",color:"white",fontSize:20,fontWeight:700,width:36,height:36,borderRadius:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginBottom:4},
   scroll:{flex:1,overflowY:"auto",paddingBottom:100},
   monthNav:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 0"},
   navArrow:{background:"white",border:"none",fontSize:22,fontWeight:700,width:38,height:38,borderRadius:12,cursor:"pointer",color:"#1a56db",boxShadow:"0 2px 8px rgba(26,86,219,0.12)",display:"flex",alignItems:"center",justifyContent:"center"},
   monthLabel:{fontSize:16,fontWeight:700,color:"#1a2744"},
-  totalCard:{background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",borderRadius:24,margin:"16px 16px 0",padding:"24px 24px 20px",color:"white",textAlign:"center",boxShadow:"0 8px 32px rgba(26,86,219,0.35)"},
+  totalCard:{background:"linear-gradient(135deg,#1a56db,#0a3fa0)",borderRadius:24,margin:"16px 16px 0",padding:"24px 24px 20px",color:"white",textAlign:"center",boxShadow:"0 8px 32px rgba(26,86,219,0.35)"},
   totalLabel:{fontSize:12,color:"rgba(255,255,255,0.75)",fontWeight:700,textTransform:"uppercase",letterSpacing:1},
   totalAmount:{fontSize:44,fontWeight:800,marginTop:4,letterSpacing:-1.5},
   totalSub:{fontSize:13,color:"rgba(255,255,255,0.6)",marginTop:4},
@@ -414,13 +533,13 @@ const styles = {
   deleteBtn:{background:"#fee2e2",border:"none",color:"#ef4444",width:28,height:28,borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"},
   tabBar:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"rgba(255,255,255,0.95)",backdropFilter:"blur(20px)",borderTop:"1px solid #e8edf8",display:"flex",justifyContent:"space-around",padding:"8px 0 28px",zIndex:100},
   tab:{background:"none",border:"none",display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",padding:"4px 24px",flex:1},
-  addFab:{width:60,height:60,background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",borderRadius:20,color:"white",fontSize:32,fontWeight:300,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(26,86,219,0.4)"},
+  addFab:{width:60,height:60,background:"linear-gradient(135deg,#1a56db,#0a3fa0)",borderRadius:20,color:"white",fontSize:32,fontWeight:300,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(26,86,219,0.4)"},
   formCard:{background:"white",borderRadius:20,overflow:"hidden",boxShadow:"0 2px 16px rgba(26,86,219,0.07)",marginBottom:16},
   formField:{padding:"14px 16px"},
   fieldLabel:{fontSize:11,fontWeight:700,color:"#8e9bae",textTransform:"uppercase",letterSpacing:0.8,marginBottom:8},
   input:{width:"100%",border:"none",background:"transparent",fontSize:16,color:"#1a2744",outline:"none"},
   select:{width:"100%",border:"none",background:"transparent",fontSize:16,color:"#1a2744",outline:"none",cursor:"pointer",padding:0},
-  primaryBtn:{width:"100%",background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white",border:"none",borderRadius:16,padding:"16px",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 20px rgba(26,86,219,0.35)"},
+  primaryBtn:{width:"100%",background:"linear-gradient(135deg,#1a56db,#0a3fa0)",color:"white",border:"none",borderRadius:16,padding:"16px",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 20px rgba(26,86,219,0.35)",display:"flex",alignItems:"center",justifyContent:"center",gap:8},
   addCatBtn:{background:"#1a56db",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0},
   successBanner:{background:"#d1fae5",color:"#065f46",borderRadius:14,padding:"12px 16px",fontSize:14,fontWeight:600,marginBottom:12,textAlign:"center",animation:"fadeIn 0.3s ease"},
   overlay:{position:"fixed",inset:0,background:"rgba(10,20,50,0.55)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,padding:"0 16px"},
