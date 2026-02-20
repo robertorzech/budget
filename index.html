@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Budżet Domowy</title>
+  <meta name="description" content="Aplikacja do kontrolowania budżetu domowego" />
+  <meta name="theme-color" content="#1a56db" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Budżet" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.png" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; background: #e8edf8; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
+    #root { height: 100%; }
+    .pressable:active { background: #f0f5ff !important; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:none; } }
+    @keyframes slideUp { from { transform:translateY(100%); } to { transform:none; } }
+    ::-webkit-scrollbar { display: none; }
+    select, input { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
+    select option { font-size: 16px; }
+    button { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script type="text/babel">
+
+const { useState, useEffect, useRef } = React;
+
+const DEFAULT_CATEGORIES = [
+  { name: "Czynsz", icon: "🏠" },
+  { name: "Kredyt", icon: "🏦" },
+  { name: "TV/Tel", icon: "📱" },
+  { name: "Subskrypcje", icon: "🔄" },
+  { name: "Pinki", icon: "🎀" },
+  { name: "Igor lekarz", icon: "🩺" },
+  { name: "Igor Socatots", icon: "⚽" },
+  { name: "Prąd", icon: "⚡" },
+  { name: "Paliwo", icon: "⛽" },
+  { name: "Żłobek", icon: "🍼" },
+  { name: "Fryzjer", icon: "✂️" },
+  { name: "Soczewki", icon: "👁️" },
+  { name: "Auto", icon: "🚗" },
+  { name: "Zakupy odzież", icon: "👕" },
+  { name: "Zakupy spożywcze", icon: "🛒" },
+  { name: "Apteka", icon: "💊" },
+  { name: "Inne", icon: "📦" },
+];
+
+const STORAGE_KEY = "budget_expenses_v1";
+const CAT_KEY = "budget_categories_v1";
+
+function loadData() {
+  try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : []; }
+  catch { return []; }
+}
+function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+function loadCats() {
+  try { const r = localStorage.getItem(CAT_KEY); return r ? JSON.parse(r) : DEFAULT_CATEGORIES; }
+  catch { return DEFAULT_CATEGORIES; }
+}
+function saveCats(c) { localStorage.setItem(CAT_KEY, JSON.stringify(c)); }
+
+function formatPLN(amount) {
+  return new Intl.NumberFormat("pl-PL", { style: "currency", currency: "PLN" }).format(amount);
+}
+function getMonthKey(date) {
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+function getMonthLabel(key) {
+  const [year, month] = key.split("-");
+  const months = ["Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec","Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"];
+  return `${months[parseInt(month)-1]} ${year}`;
+}
+
+function App() {
+  const [expenses, setExpenses] = useState(loadData);
+  const [categories, setCategories] = useState(loadCats);
+  const [view, setView] = useState("dashboard");
+  const [selectedCat, setSelectedCat] = useState(null);
+  const [currentMonth, setCurrentMonth] = useState(() => getMonthKey(new Date()));
+  const [form, setForm] = useState({ category: "", description: "", amount: "" });
+  const [newCatName, setNewCatName] = useState("");
+  const [showNewCat, setShowNewCat] = useState(false);
+  const [deleteId, setDeleteId] = useState(null);
+  const [addSuccess, setAddSuccess] = useState(false);
+
+  useEffect(() => { saveData(expenses); }, [expenses]);
+  useEffect(() => { saveCats(categories); }, [categories]);
+
+  const monthExpenses = expenses.filter(e => getMonthKey(e.date) === currentMonth);
+  const allMonths = [...new Set(expenses.map(e => getMonthKey(e.date)))].sort().reverse();
+  if (!allMonths.includes(currentMonth)) allMonths.unshift(currentMonth);
+  const totalMonth = monthExpenses.reduce((s, e) => s + e.amount, 0);
+  const byCategory = categories.map(cat => {
+    const items = monthExpenses.filter(e => e.category === cat.name);
+    const total = items.reduce((s, e) => s + e.amount, 0);
+    return { ...cat, items, total };
+  }).filter(c => c.total > 0).sort((a,b) => b.total - a.total);
+
+  const monthIdx = allMonths.indexOf(currentMonth);
+
+  function addExpense() {
+    if (!form.category || !form.amount || isNaN(parseFloat(form.amount.replace(",",".")))) return;
+    const exp = {
+      id: Date.now(),
+      category: form.category,
+      description: form.description,
+      amount: parseFloat(form.amount.replace(",",".")),
+      date: new Date().toISOString(),
+    };
+    setExpenses(prev => [exp, ...prev]);
+    setForm({ category: form.category, description: "", amount: "" });
+    setAddSuccess(true);
+    setTimeout(() => setAddSuccess(false), 2000);
+    setCurrentMonth(getMonthKey(new Date()));
+  }
+
+  function deleteExpense(id) {
+    setExpenses(prev => prev.filter(e => e.id !== id));
+    setDeleteId(null);
+  }
+
+  function addCategory() {
+    if (!newCatName.trim()) return;
+    const cat = { name: newCatName.trim(), icon: "🏷️" };
+    setCategories(prev => [...prev, cat]);
+    setForm(f => ({ ...f, category: cat.name }));
+    setNewCatName("");
+    setShowNewCat(false);
+  }
+
+  const catDetail = selectedCat
+    ? { ...selectedCat, items: expenses.filter(e => e.category === selectedCat.name).sort((a,b) => new Date(b.date)-new Date(a.date)) }
+    : null;
+
+  const s = styles;
+
+  return (
+    <div style={s.root}>
+      {/* Status bar */}
+      <div style={s.statusBar}>
+        <span style={{fontSize:12,fontWeight:600}}>
+          {new Date().toLocaleTimeString("pl-PL",{hour:"2-digit",minute:"2-digit"})}
+        </span>
+        <div style={{display:"flex",gap:6,alignItems:"center",fontSize:12}}>
+          <span>●●●</span><span>WiFi</span><span>🔋</span>
+        </div>
+      </div>
+
+      {/* Header */}
+      <div style={s.header}>
+        {view === "category" && (
+          <button style={s.backBtn} onClick={() => { setView("dashboard"); setSelectedCat(null); }}>‹ Powrót</button>
+        )}
+        <div style={{flex:1}}>
+          <div style={s.headerTitle}>
+            {view==="dashboard" ? "Budżet domowy" : view==="add" ? "Dodaj wydatek" : `${selectedCat?.icon} ${selectedCat?.name}`}
+          </div>
+          {view==="dashboard" && <div style={s.headerSub}>{getMonthLabel(currentMonth)}</div>}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={s.scroll}>
+
+        {/* ===== DASHBOARD ===== */}
+        {view === "dashboard" && <>
+          <div style={s.monthNav}>
+            <button style={{...s.navArrow, opacity: monthIdx>=allMonths.length-1?0.3:1}}
+              disabled={monthIdx>=allMonths.length-1}
+              onClick={() => setCurrentMonth(allMonths[monthIdx+1])}>‹</button>
+            <span style={s.monthLabel}>{getMonthLabel(currentMonth)}</span>
+            <button style={{...s.navArrow, opacity: monthIdx<=0?0.3:1}}
+              disabled={monthIdx<=0}
+              onClick={() => setCurrentMonth(allMonths[monthIdx-1])}>›</button>
+          </div>
+
+          <div style={s.totalCard}>
+            <div style={s.totalLabel}>Wydatki miesięczne</div>
+            <div style={s.totalAmount}>{formatPLN(totalMonth)}</div>
+            <div style={s.totalSub}>{monthExpenses.length} transakcji</div>
+          </div>
+
+          <div style={s.sectionTitle}>Wydatki wg kategorii</div>
+          {byCategory.length === 0 && (
+            <div style={s.emptyState}>
+              <div style={{fontSize:48}}>💰</div>
+              <div style={{color:"#8e9bae",marginTop:8}}>Brak wydatków w tym miesiącu</div>
+            </div>
+          )}
+          <div style={s.listCard}>
+            {byCategory.map((cat, i) => {
+              const pct = totalMonth > 0 ? (cat.total/totalMonth)*100 : 0;
+              return (
+                <div key={cat.name}>
+                  <div style={s.catRow} className="pressable"
+                    onClick={() => { setSelectedCat(cat); setView("category"); }}>
+                    <div style={s.catIcon}>{cat.icon}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={s.catName}>{cat.name}</div>
+                      <div style={s.progressBar}>
+                        <div style={{...s.progressFill, width:`${pct}%`}} />
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={s.catAmount}>{formatPLN(cat.total)}</div>
+                      <div style={s.catCount}>{cat.items.length} szt.</div>
+                    </div>
+                    <div style={s.chevron}>›</div>
+                  </div>
+                  {i < byCategory.length-1 && <div style={s.divider} />}
+                </div>
+              );
+            })}
+          </div>
+        </>}
+
+        {/* ===== ADD EXPENSE ===== */}
+        {view === "add" && (
+          <div style={{padding:"0 16px 32px"}}>
+            {addSuccess && <div style={s.successBanner}>✅ Wydatek dodany!</div>}
+
+            <div style={s.formCard}>
+              <div style={s.formField}>
+                <div style={s.fieldLabel}>Kategoria</div>
+                <select style={s.select} value={form.category}
+                  onChange={e => {
+                    if (e.target.value === "__new__") { setShowNewCat(true); }
+                    else setForm(f => ({...f, category: e.target.value}));
+                  }}>
+                  <option value="">Wybierz kategorię...</option>
+                  {categories.map(c => <option key={c.name} value={c.name}>{c.icon} {c.name}</option>)}
+                  <option value="__new__">➕ Dodaj nową kategorię</option>
+                </select>
+              </div>
+
+              {showNewCat && (
+                <div style={{padding:"0 16px 14px"}}>
+                  <div style={s.fieldLabel}>Nazwa nowej kategorii</div>
+                  <div style={{display:"flex",gap:8,marginTop:6}}>
+                    <input style={{...s.input,flex:1,border:"1px solid #e0e8f8",borderRadius:10,padding:"8px 12px"}}
+                      placeholder="np. Hobby"
+                      value={newCatName}
+                      onChange={e => setNewCatName(e.target.value)}
+                      onKeyDown={e => e.key==="Enter" && addCategory()} />
+                    <button style={s.addCatBtn} onClick={addCategory}>Dodaj</button>
+                  </div>
+                </div>
+              )}
+
+              <div style={s.divider} />
+
+              <div style={s.formField}>
+                <div style={s.fieldLabel}>Opis / Nazwa</div>
+                <input style={s.input} placeholder="np. Biedronka, zakupy tygodniowe"
+                  value={form.description}
+                  onChange={e => setForm(f => ({...f, description: e.target.value}))} />
+              </div>
+
+              <div style={s.divider} />
+
+              <div style={s.formField}>
+                <div style={s.fieldLabel}>Kwota (PLN)</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <input style={{...s.input,fontSize:28,fontWeight:800,color:"#1a56db",flex:1}}
+                    placeholder="0,00"
+                    value={form.amount}
+                    inputMode="decimal"
+                    onChange={e => setForm(f => ({...f, amount: e.target.value}))}
+                    onKeyDown={e => e.key==="Enter" && addExpense()} />
+                  <span style={{fontSize:18,color:"#8e9bae",fontWeight:600}}>zł</span>
+                </div>
+              </div>
+            </div>
+
+            <button style={{...s.primaryBtn, opacity: form.category&&form.amount?1:0.4}} onClick={addExpense}>
+              Dodaj wydatek
+            </button>
+
+            {monthExpenses.length > 0 && <>
+              <div style={{...s.sectionTitle,marginTop:28}}>Ostatnie w tym miesiącu</div>
+              <div style={s.listCard}>
+                {monthExpenses.slice(0,15).map((exp, i) => {
+                  const cat = categories.find(c => c.name === exp.category) || {icon:"📦"};
+                  return (
+                    <div key={exp.id}>
+                      <div style={s.expRow}>
+                        <div style={s.catIcon}>{cat.icon}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={s.expName}>{exp.description || exp.category}</div>
+                          <div style={s.expMeta}>{exp.category} · {new Date(exp.date).toLocaleDateString("pl-PL")}</div>
+                        </div>
+                        <div style={s.expAmount}>{formatPLN(exp.amount)}</div>
+                        <button style={s.deleteBtn} onClick={() => setDeleteId(exp.id)}>✕</button>
+                      </div>
+                      {i < Math.min(monthExpenses.length,15)-1 && <div style={s.divider} />}
+                    </div>
+                  );
+                })}
+              </div>
+            </>}
+          </div>
+        )}
+
+        {/* ===== CATEGORY DETAIL ===== */}
+        {view === "category" && catDetail && (
+          <div style={{padding:"0 16px 32px"}}>
+            <div style={{...s.totalCard,background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)"}}>
+              <div style={{fontSize:44,marginBottom:8}}>{catDetail.icon}</div>
+              <div style={s.totalLabel}>{catDetail.name}</div>
+              <div style={s.totalAmount}>{formatPLN(catDetail.items.reduce((s,e)=>s+e.amount,0))}</div>
+              <div style={s.totalSub}>{catDetail.items.length} transakcji łącznie</div>
+            </div>
+
+            <div style={s.sectionTitle}>Historia wszystkich transakcji</div>
+            {catDetail.items.length === 0 && (
+              <div style={s.emptyState}><div style={{fontSize:40}}>📭</div><div style={{color:"#8e9bae",marginTop:8}}>Brak transakcji</div></div>
+            )}
+            <div style={s.listCard}>
+              {catDetail.items.map((exp, i) => (
+                <div key={exp.id}>
+                  <div style={s.expRow}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={s.expName}>{exp.description || "(brak opisu)"}</div>
+                      <div style={s.expMeta}>
+                        {new Date(exp.date).toLocaleDateString("pl-PL",{day:"numeric",month:"long",year:"numeric"})}
+                      </div>
+                      <div style={{fontSize:11,color:"#b0bec5",marginTop:2}}>{getMonthLabel(getMonthKey(exp.date))}</div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{...s.expAmount,fontSize:16}}>{formatPLN(exp.amount)}</div>
+                    </div>
+                    <button style={s.deleteBtn} onClick={() => setDeleteId(exp.id)}>✕</button>
+                  </div>
+                  {i < catDetail.items.length-1 && <div style={s.divider} />}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tab Bar */}
+      <div style={s.tabBar}>
+        <button style={s.tab} onClick={() => setView("dashboard")}>
+          <div style={{fontSize:24,filter:view==="dashboard"?"none":"grayscale(1) opacity(0.4)"}}>📊</div>
+          <div style={{fontSize:10,color:view==="dashboard"?"#1a56db":"#8e9bae",marginTop:2,fontWeight:view==="dashboard"?700:400}}>Dashboard</div>
+        </button>
+        <button style={{...s.tab,position:"relative",top:-14}} onClick={() => setView("add")}>
+          <div style={s.addFab}>+</div>
+        </button>
+        <button style={s.tab} onClick={() => { setCurrentMonth(getMonthKey(new Date())); setView("dashboard"); }}>
+          <div style={{fontSize:24,filter:"grayscale(1) opacity(0.4)"}}>📅</div>
+          <div style={{fontSize:10,color:"#8e9bae",marginTop:2}}>Ten miesiąc</div>
+        </button>
+      </div>
+
+      {/* Delete Modal */}
+      {deleteId && (
+        <div style={s.overlay} onClick={() => setDeleteId(null)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <div style={{fontSize:52,marginBottom:12}}>🗑️</div>
+            <div style={s.modalTitle}>Usuń wydatek?</div>
+            <div style={s.modalSub}>Tej operacji nie można cofnąć.</div>
+            <button style={s.deleteConfirm} onClick={() => deleteExpense(deleteId)}>Usuń</button>
+            <button style={s.cancelBtn} onClick={() => setDeleteId(null)}>Anuluj</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const styles = {
+  root:{minHeight:"100vh",maxWidth:430,margin:"0 auto",background:"#f2f5fb",display:"flex",flexDirection:"column",position:"relative",boxShadow:"0 0 60px rgba(26,86,219,0.12)"},
+  statusBar:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px 4px",background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white"},
+  header:{background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white",padding:"8px 20px 24px",display:"flex",alignItems:"flex-end",gap:12},
+  headerTitle:{fontSize:28,fontWeight:800,letterSpacing:-0.5,lineHeight:1.1},
+  headerSub:{fontSize:14,color:"rgba(255,255,255,0.7)",marginTop:2,fontWeight:500},
+  backBtn:{background:"rgba(255,255,255,0.2)",border:"none",color:"white",fontSize:16,fontWeight:600,padding:"6px 14px",borderRadius:20,cursor:"pointer",flexShrink:0,marginBottom:4},
+  scroll:{flex:1,overflowY:"auto",paddingBottom:100},
+  monthNav:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px 0"},
+  navArrow:{background:"white",border:"none",fontSize:22,fontWeight:700,width:38,height:38,borderRadius:12,cursor:"pointer",color:"#1a56db",boxShadow:"0 2px 8px rgba(26,86,219,0.12)",display:"flex",alignItems:"center",justifyContent:"center"},
+  monthLabel:{fontSize:16,fontWeight:700,color:"#1a2744"},
+  totalCard:{background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",borderRadius:24,margin:"16px 16px 0",padding:"24px 24px 20px",color:"white",textAlign:"center",boxShadow:"0 8px 32px rgba(26,86,219,0.35)"},
+  totalLabel:{fontSize:12,color:"rgba(255,255,255,0.75)",fontWeight:700,textTransform:"uppercase",letterSpacing:1},
+  totalAmount:{fontSize:44,fontWeight:800,marginTop:4,letterSpacing:-1.5},
+  totalSub:{fontSize:13,color:"rgba(255,255,255,0.6)",marginTop:4},
+  sectionTitle:{fontSize:12,fontWeight:700,color:"#8e9bae",textTransform:"uppercase",letterSpacing:0.8,padding:"20px 20px 8px"},
+  listCard:{background:"white",borderRadius:20,margin:"0 16px",overflow:"hidden",boxShadow:"0 2px 16px rgba(26,86,219,0.07)"},
+  catRow:{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",cursor:"pointer"},
+  catIcon:{fontSize:24,width:44,height:44,background:"#f0f5ff",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0},
+  catName:{fontSize:15,fontWeight:600,color:"#1a2744",marginBottom:6},
+  progressBar:{height:4,background:"#e8edf8",borderRadius:4,overflow:"hidden"},
+  progressFill:{height:"100%",background:"linear-gradient(90deg,#3b82f6,#1a56db)",borderRadius:4},
+  catAmount:{fontSize:15,fontWeight:700,color:"#1a2744"},
+  catCount:{fontSize:11,color:"#8e9bae",textAlign:"right",marginTop:2},
+  chevron:{color:"#c5d0e8",fontSize:20,fontWeight:700,marginLeft:4},
+  divider:{height:1,background:"#f0f4fb",marginLeft:16},
+  emptyState:{textAlign:"center",padding:"48px 20px",color:"#8e9bae",fontSize:15},
+  expRow:{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"},
+  expName:{fontSize:15,fontWeight:600,color:"#1a2744",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"},
+  expMeta:{fontSize:12,color:"#8e9bae",marginTop:2},
+  expAmount:{fontSize:15,fontWeight:700,color:"#1a56db",flexShrink:0},
+  deleteBtn:{background:"#fee2e2",border:"none",color:"#ef4444",width:28,height:28,borderRadius:8,fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"},
+  tabBar:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"rgba(255,255,255,0.95)",backdropFilter:"blur(20px)",borderTop:"1px solid #e8edf8",display:"flex",justifyContent:"space-around",padding:"8px 0 28px",zIndex:100},
+  tab:{background:"none",border:"none",display:"flex",flexDirection:"column",alignItems:"center",cursor:"pointer",padding:"4px 24px",flex:1},
+  addFab:{width:60,height:60,background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",borderRadius:20,color:"white",fontSize:32,fontWeight:300,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 6px 20px rgba(26,86,219,0.4)"},
+  formCard:{background:"white",borderRadius:20,overflow:"hidden",boxShadow:"0 2px 16px rgba(26,86,219,0.07)",marginBottom:16},
+  formField:{padding:"14px 16px"},
+  fieldLabel:{fontSize:11,fontWeight:700,color:"#8e9bae",textTransform:"uppercase",letterSpacing:0.8,marginBottom:8},
+  input:{width:"100%",border:"none",background:"transparent",fontSize:16,color:"#1a2744",outline:"none"},
+  select:{width:"100%",border:"none",background:"transparent",fontSize:16,color:"#1a2744",outline:"none",cursor:"pointer",padding:0},
+  primaryBtn:{width:"100%",background:"linear-gradient(135deg,#1a56db 0%,#0a3fa0 100%)",color:"white",border:"none",borderRadius:16,padding:"16px",fontSize:16,fontWeight:700,cursor:"pointer",boxShadow:"0 6px 20px rgba(26,86,219,0.35)"},
+  addCatBtn:{background:"#1a56db",color:"white",border:"none",borderRadius:10,padding:"8px 16px",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0},
+  successBanner:{background:"#d1fae5",color:"#065f46",borderRadius:14,padding:"12px 16px",fontSize:14,fontWeight:600,marginBottom:12,textAlign:"center",animation:"fadeIn 0.3s ease"},
+  overlay:{position:"fixed",inset:0,background:"rgba(10,20,50,0.55)",backdropFilter:"blur(4px)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200,padding:"0 16px"},
+  modal:{background:"white",borderRadius:"24px 24px 12px 12px",padding:"28px 24px 44px",width:"100%",maxWidth:430,textAlign:"center",animation:"slideUp 0.3s ease"},
+  modalTitle:{fontSize:20,fontWeight:800,color:"#1a2744",marginBottom:6},
+  modalSub:{fontSize:14,color:"#8e9bae",marginBottom:24},
+  deleteConfirm:{width:"100%",background:"#ef4444",color:"white",border:"none",borderRadius:14,padding:"14px",fontSize:16,fontWeight:700,cursor:"pointer",marginBottom:10,display:"block"},
+  cancelBtn:{width:"100%",background:"#f0f4fb",color:"#1a2744",border:"none",borderRadius:14,padding:"14px",fontSize:16,fontWeight:700,cursor:"pointer",display:"block"},
+};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
